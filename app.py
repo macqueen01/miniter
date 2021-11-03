@@ -36,11 +36,11 @@ def create_app(test_config = None):
             if accessToken is None:
                 return Response(status=401)
             try:
-                payload = jwt.decode(accessToken, current_app.config['SECRET_KEY'])
+                payload = jwt.decode(accessToken, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
             except jwt.InvalidTokenError:
                 payload = None
             
-            if payload['role'] == 'master':
+            if payload and payload['role'] == 'master':
                 g.user_role = payload['role']
                 g.user_id = payload['id']
                 g.user = current_app.database.execute(text("SELECT * FROM users WHERE id = :id"), {'id': g.user_id}).fetchone()
@@ -75,19 +75,10 @@ def create_app(test_config = None):
         return decorater
 
 
-    
-    
     @app.route('/signUp', methods=['POST'])
     def signUp():
         newUser = request.json
         newUser['password'] = bcrypt.hashpw(newUser['password'].encode('UTF-8'), bcrypt.gensalt())
-        
-        if 'rolePassword' in newUser.keys() and newUser['rolePassword'] == 'JaePass':
-            newUser['role'] = 'master'
-
-        elif 'rolePassword' in newUser.keys():
-            return Response(status=401)
-
         userId = app.database.execute(text("""
         INSERT INTO users (
             name,
@@ -124,6 +115,11 @@ def create_app(test_config = None):
         contents = request.json
         email = contents['email']
         password = contents['password']
+        
+        if 'roleKey' in contents.keys():
+            roleKey = contents['roleKey']
+        else:
+            roleKey = 'userDefault'
 
         row = current_app.database.execute(text("""
         SELECT 
@@ -137,8 +133,12 @@ def create_app(test_config = None):
             userId = row['id']
             load = {
                 'id' : userId,
-                'role' : 'user'
+                'role' : 'user',
                 'exp' : datetime.utcnow() + timedelta(seconds = 60 * 60 * 24)
+            } if roleKey != app.config['MASTER_KEY'] else {
+                'id' : userId,
+                'role' : 'master',
+                'exp' : datetime.utcnow() + timedelta(seconds = 60 * 60 * 24 * 7)
             }
             token = jwt.encode(load, app.config['JWT_SECRET_KEY'], 'HS256')
             return jsonify({
@@ -273,18 +273,6 @@ def create_app(test_config = None):
                 """), {'userId': searchId}).fetchall()
         followLst = [x['follows'] for x in row]
         return f"id : {searchId} is following {followLst}", 200
-
-    @app.route('/deleteUser', methods=['POST'])
-    @loginRequired
-    def deleteUser():
-        contents = request.json
-        id = g.user_id
-        current_app.database.execute(text("""
-        DELETE FROM users
-        WHERE id = :id
-        """), {'id': id})
-        return 'User deleted.', 200
-    
 
 
     # an endpoint that deletes the tweet with given id by a user whose id is the userId of the tweet
@@ -438,6 +426,32 @@ def create_app(test_config = None):
         for hashtag in hashtags:
             hashtagLst.append([hashtag, [x[0] for x in tweetsLst if hashtag in x[1]]])
         return jsonify(hashtagLst)
+
+    # an endpoint that deletes a user, his tweets, and his followers with given id after authentifying the user's role is 'master'
+    @app.route('/deleteUser', methods=['POST'])
+    @masterLoginRequired
+    def deleteUser():
+        contents = request.json
+        id = contents['id']
+
+        current_app.database.execute(text("""
+        DELETE FROM tweets
+        WHERE userId = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM follows
+        WHERE id = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM follows
+        WHERE follows = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM users
+        WHERE id = :id
+        """), {'id': id})
+        return 'User deleted.', 200
+
 
     return app
 
