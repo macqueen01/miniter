@@ -452,6 +452,30 @@ def create_app(test_config = None):
         """), {'id': id})
         return 'User deleted.', 200
 
+    # an endpoint that deletes a user after authentifying the user is himself
+    @app.route('/deleteUserSelf', methods=['POST'])
+    @loginRequired
+    def deleteUserSelf():
+        contents = request.json
+        id = g.user_id
+
+        current_app.database.execute(text("""
+        DELETE FROM tweets
+        WHERE userId = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM follows
+        WHERE id = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM follows
+        WHERE follows = :id
+        """), {'id': id})
+        current_app.database.execute(text("""
+        DELETE FROM users
+        WHERE id = :id
+        """), {'id': id})
+        return 'User deleted.', 200
 
     return app
 
