@@ -4,6 +4,7 @@ from logging import currentframe
 from flask import Flask, request, jsonify, current_app, g
 from flask.json import JSONEncoder
 from flask.wrappers import Response
+from flask_cors import CORS
 from sqlalchemy import create_engine, text
 from functools import wraps
 import ast
@@ -20,6 +21,8 @@ class SetEncoder(JSONEncoder):
 def create_app(test_config = None):
     app = Flask(__name__)
 
+    CORS(app)
+
     if test_config is None:
         app.config.from_pyfile("config.py")
     else:
@@ -32,7 +35,7 @@ def create_app(test_config = None):
     def masterLoginRequired(f):
         @wraps(f)
         def decorator(*args, **kwargs):
-            accessToken = request.headers.get('Authorization')
+            accessToken = request.headers.get('token')
             if accessToken is None:
                 return Response(status=401)
             try:
@@ -53,7 +56,7 @@ def create_app(test_config = None):
     def loginRequired(f):
         @wraps(f)
         def decorater(*args, **kwargs):
-            accessToken = request.headers.get('Authorization')
+            accessToken = request.headers.get('token')
             if accessToken is None:
                 return Response(status=401)
             try:
@@ -74,6 +77,7 @@ def create_app(test_config = None):
             return f(*args, **kwargs)
         return decorater
 
+  
 
     @app.route('/signUp', methods=['POST'])
     def signUp():
@@ -115,11 +119,7 @@ def create_app(test_config = None):
         contents = request.json
         email = contents['email']
         password = contents['password']
-        
-        if 'roleKey' in contents.keys():
-            roleKey = contents['roleKey']
-        else:
-            roleKey = 'userDefault'
+        roleKey = contents['roleKey']
 
         row = current_app.database.execute(text("""
         SELECT 
@@ -138,10 +138,11 @@ def create_app(test_config = None):
             } if roleKey != app.config['MASTER_KEY'] else {
                 'id' : userId,
                 'role' : 'master',
-                'exp' : datetime.utcnow() + timedelta(seconds = 60 * 60 * 24 * 7)
+                'exp' : datetime.utcnow() + timedelta(seconds = 60 * 60 * 24)
             }
             token = jwt.encode(load, app.config['JWT_SECRET_KEY'], 'HS256')
             return jsonify({
+                'user_id' : userId,
                 'accessToken' : token
             })
         else:
@@ -203,7 +204,7 @@ def create_app(test_config = None):
         contents = request.json
         id = g.user_id
         tweet = contents['tweet']
-        var = current_app.database.execute(text("""
+        current_app.database.execute(text("""
         INSERT INTO tweets (
             userId,
             tweet
@@ -211,7 +212,7 @@ def create_app(test_config = None):
             :id,
             :tweet
         )
-        """), {'id': id, 'tweet': tweet}).lastrowid
+        """), {'id': id, 'tweet': tweet})
 
         return 'You have tweeted !', 200
 
@@ -231,9 +232,10 @@ def create_app(test_config = None):
                             SELECT *
                             FROM tweets
                             """), {}).fetchall()
-        timelineLst = [(x['userId'], x['created_at'], x['tweet']) for x in row2 if x['userId'] in followLst]
+        timelineLst = [{'user_id' : x['userId'], 'tweet' : x['tweet']}
+         for x in row2 if x['userId'] in followLst]
 
-        return jsonify(timelineLst)
+        return jsonify({'id' : id, 'timeline' : timelineLst})
 
 
     @app.route('/logs', methods=['GET'])
